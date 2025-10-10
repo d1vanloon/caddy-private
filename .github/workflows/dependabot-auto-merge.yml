@@ -1,0 +1,29 @@
+name: Dependabot Auto-merge
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  auto-merge:
+    # Only run for Dependabot PRs
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Wait for CI to complete
+      uses: lewagon/wait-on-check-action@v1.3.1
+      with:
+        ref: ${{ github.event.pull_request.head.sha }}
+        check-name: 'Build and Publish Docker Image'
+        repo-token: ${{ secrets.GITHUB_TOKEN }}
+        wait-interval: 10
+        allowed-conclusions: success
+
+    - name: Enable auto-merge for Dependabot PRs
+      if: success()
+      run: |
+        gh pr merge --auto --squash "$PR_URL"
+      env:
+        PR_URL: ${{ github.event.pull_request.html_url }}
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
