@@ -33,18 +33,59 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
 
+    - name: Extract Caddy version from Dockerfile
+      id: caddy-version
+      run: |
+        CADDY_VERSION=$(grep -oP 'FROM caddy:\K[^-]+' Dockerfile | head -1)
+        echo "version=$CADDY_VERSION" >> $GITHUB_OUTPUT
+        echo "major=$(echo $CADDY_VERSION | cut -d. -f1)" >> $GITHUB_OUTPUT
+        echo "minor=$(echo $CADDY_VERSION | cut -d. -f1-2)" >> $GITHUB_OUTPUT
+
+    - name: Generate tags based on context
+      id: tags
+      run: |
+        CADDY_VERSION="${{ steps.caddy-version.outputs.version }}"
+        CADDY_MINOR="${{ steps.caddy-version.outputs.minor }}"
+        CADDY_MAJOR="${{ steps.caddy-version.outputs.major }}"
+        
+        # Initialize tags array
+        TAGS=()
+        
+        if [ "${{ github.event_name }}" = "pull_request" ]; then
+          # PR builds: Caddy version + PR number
+          TAGS+=("${CADDY_VERSION}-pr${{ github.event.number }}")
+          TAGS+=("${CADDY_MINOR}-pr${{ github.event.number }}")
+          TAGS+=("${CADDY_MAJOR}-pr${{ github.event.number }}")
+        elif [ "${{ github.ref_name }}" = "main" ] || [ "${{ github.ref_name }}" = "master" ]; then
+          # Main/master branch: Clean Caddy version tags
+          TAGS+=("${CADDY_VERSION}")
+          TAGS+=("${CADDY_MINOR}")
+          TAGS+=("${CADDY_MAJOR}")
+          TAGS+=("latest")
+        else
+          # Other branches: Caddy version + branch name (sanitized)
+          BRANCH_NAME=$(echo "${{ github.ref_name }}" | sed 's/[^a-zA-Z0-9._-]/-/g')
+          TAGS+=("${CADDY_VERSION}-${BRANCH_NAME}")
+          TAGS+=("${CADDY_MINOR}-${BRANCH_NAME}")
+          TAGS+=("${CADDY_MAJOR}-${BRANCH_NAME}")
+        fi
+        
+        # Convert array to newline-separated string for output
+        printf '%s\n' "${TAGS[@]}" > tags.txt
+        echo "Generated tags:"
+        cat tags.txt
+        
+        # Set output for use in docker/metadata-action
+        echo "tags<<EOF" >> $GITHUB_OUTPUT
+        cat tags.txt >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+
     - name: Extract metadata
       id: meta
       uses: docker/metadata-action@v5
       with:
         images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-        tags: |
-          type=ref,event=branch
-          type=ref,event=pr
-          type=semver,pattern={{version}}
-          type=semver,pattern={{major}}.{{minor}}
-          type=semver,pattern={{major}}
-          type=raw,value=latest,enable={{is_default_branch}}
+        tags: ${{ steps.tags.outputs.tags }}
 
     - name: Build and push Docker image
       uses: docker/build-push-action@v5
